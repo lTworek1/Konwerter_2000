@@ -25,7 +25,7 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed konwerter_lkon_gui.py
+          pyinstaller --onefile --windowed konwerter_2000.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
