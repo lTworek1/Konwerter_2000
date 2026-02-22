@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox
 # IO + ENCODING
 # ============================================================
 
-def read_text_auto(path: str):
+def read_text_auto(path):
     try:
         txt = open(path, "r", encoding="cp1250").read()
         return txt.splitlines(), "cp1250"
@@ -15,7 +15,7 @@ def read_text_auto(path: str):
         txt = open(path, "r", encoding="utf-8", errors="replace").read()
         return txt.splitlines(), "utf-8"
 
-def write_text(path: str, lines, encoding="cp1250"):
+def write_text(path, lines, encoding="cp1250"):
     data = "\r\n".join(lines) + "\r\n"
     try:
         open(path, "w", encoding=encoding, newline="\r\n").write(data)
@@ -23,10 +23,10 @@ def write_text(path: str, lines, encoding="cp1250"):
         open(path, "w", encoding="utf-8", newline="\r\n").write(data)
 
 # ============================================================
-# PARSING WEJŚCIA
+# PARSING
 # ============================================================
 
-def normalize_header(s: str) -> str:
+def normalize_header(s):
     s = s.strip().upper().replace("\u00A0", " ")
     s = s.replace(".", "")
     s = re.sub(r"\s+", " ", s)
@@ -69,7 +69,7 @@ def extract_fields_by_pipes(line, pipes):
     return vals
 
 # ============================================================
-# BEZPIECZNA WALIDACJA WIERSZY
+# WALIDACJA WIERSZY
 # ============================================================
 
 def is_int(s):
@@ -80,15 +80,13 @@ def looks_like_data_row(line, pipes=None, lp_slice=None):
     if not t:
         return False
 
-    # wyklucz "1:5", "1:4"
+    # wyklucz 1:5 itd.
     if re.match(r"^\d+\s*:\s*\d+", t):
         return False
 
-    # sprawdź długość
     if pipes and len(line) < pipes[-1]:
         return False
 
-    # sprawdź Lp jako integer
     if lp_slice:
         lp = line[lp_slice[0]:lp_slice[1]].strip()
         if not is_int(lp):
@@ -112,33 +110,59 @@ def padr(s, w):
     s = "" if s is None else str(s)
     return s[:w].ljust(w)
 
+def clean_time(t):
+    t = (t or "").strip()
+    if t.startswith("1-"):
+        t = t[2:]
+    return t
+
+def num_or_zero(x):
+    x = (x or "").strip()
+    return x if x else "0"
+
 # ============================================================
-# WERSJA A (PROSTA)
+# FORMAT WIERSZA LKON
 # ============================================================
 
-def build_lkon_A(vals, idxs):
+def build_lkon_line(vals, idxs):
     def g(k):
         idx = idxs.get(k, 0)
         return vals[idx] if idx else ""
 
+    lp   = g("lp")
+    nazw = g("naz")
+    sek  = g("s")
+    wkm  = g("wkm")
+    typ  = g("t")
+    obr  = g("obr")
+    godz = clean_time(g("godz"))
+    pred = num_or_zero(g("mmin"))
+    coef = num_or_zero(g("coef"))
+    gmp  = num_or_zero(g("gmp"))
+    oddz = num_or_zero(g("oddz"))
+    km   = num_or_zero(g("km"))
+
     return (
-        f"{padl(g('lp'),4)} "
-        f"{padr(g('naz'),26)} "
-        f"{padl(g('s'),2)} "
-        f"{padr(g('wkm'),8)} "
-        f"{padr(g('t'),3)} "
-        f"{padr(g('obr'),18)} "
-        f"{padr(g('godz'),10)} "
-        f"{padl(g('mmin'),9)} "
-        f"{padl(g('coef'),7)} "
-        f"{padl(g('gmp'),7)} "
-        f"{padl(g('oddz'),8)} "
-        f"{padl(g('km'),6)}"
+        f"{padl(lp,5)} "
+        f"{padr(nazw,24)}"
+        f"{padl(sek,2)} "
+        f"{padr(wkm,9)}"
+        f"{padr(typ,2)} "
+        f"{padr(obr,16)}"
+        f"{padr(godz,9)} "
+        f"{padl(pred,10)}"
+        f"{padl(coef,7)}"
+        f"{padl(gmp,9)}"
+        f"{padl(oddz,8)}"
+        f"{padl(km,7)}"
     )
+
+# ============================================================
+# WERSJA A
+# ============================================================
 
 def convert_A(input_path):
     lines, enc = read_text_auto(input_path)
-
     hidx, hline = find_input_header(lines)
     if hidx is None:
         raise ValueError("Nie znaleziono nagłówka |Lp.| + Nazwa")
@@ -174,7 +198,7 @@ def convert_A(input_path):
         if not looks_like_data_row(ln, pipes, lp_slice):
             continue
         vals = extract_fields_by_pipes(ln, pipes)
-        out_lines.append(build_lkon_A(vals, idxs))
+        out_lines.append(build_lkon_line(vals, idxs))
 
     base, _ = os.path.splitext(input_path)
     out_path = base + "_LKON.txt"
@@ -217,7 +241,6 @@ def replace_results_in_template(template_bytes, new_lines):
 
 def convert_B(input_path, template_path):
     lines, _ = read_text_auto(input_path)
-
     hidx, hline = find_input_header(lines)
     if hidx is None:
         raise ValueError("Nie znaleziono nagłówka |Lp.| + Nazwa")
@@ -225,18 +248,18 @@ def convert_B(input_path, template_path):
     pipes, headers = parse_pipe_header(hline)
 
     idxs = {
-        "lp": find_col(headers, ["LP", "LP."]),
-        "naz": find_col(headers, ["NAZWA", "NAZWISKO HODOWCY", "NAZWISKO"]),
-        "s": find_col(headers, ["S"]),
-        "wkm": find_col(headers, ["W/K/M", "W-K-M", "WKM"]),
-        "t": find_col(headers, ["T"]),
-        "obr": find_col(headers, ["NUMER OBR", "OBRACZKA", "OBRĄCZKA"]),
+        "lp":   find_col(headers, ["LP", "LP."]),
+        "naz":  find_col(headers, ["NAZWA", "NAZWISKO HODOWCY", "NAZWISKO"]),
+        "s":    find_col(headers, ["S"]),
+        "wkm":  find_col(headers, ["W/K/M", "W-K-M", "WKM"]),
+        "t":    find_col(headers, ["T"]),
+        "obr":  find_col(headers, ["NUMER OBR", "OBRACZKA", "OBRĄCZKA"]),
         "godz": find_col(headers, ["GODZINA", "PRZYL"]),
         "mmin": find_col(headers, ["M/MIN", "PREDK", "PREDKOSC"]),
         "coef": find_col(headers, ["COEF"]),
-        "gmp": find_col(headers, ["GMP"]),
+        "gmp":  find_col(headers, ["GMP"]),
         "oddz": find_col(headers, ["ODDZ", "PUNKTY"]),
-        "km": find_col(headers, ["KM", "ODLEG"]),
+        "km":   find_col(headers, ["KM", "ODLEG"]),
     }
 
     lp_slice = None
@@ -253,7 +276,7 @@ def convert_B(input_path, template_path):
         if not looks_like_data_row(ln, pipes, lp_slice):
             continue
         vals = extract_fields_by_pipes(ln, pipes)
-        new_lines.append(build_lkon_A(vals, idxs))
+        new_lines.append(build_lkon_line(vals, idxs))
 
     tpl_bytes = open(template_path, "rb").read()
     out_bytes = replace_results_in_template(tpl_bytes, new_lines)
