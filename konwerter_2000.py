@@ -8,7 +8,6 @@ from tkinter import filedialog, messagebox
 # ============================================================
 
 def read_text_auto(path: str):
-    # LKON-y zwykle cp1250
     try:
         txt = open(path, "r", encoding="cp1250").read()
         return txt.splitlines(), "cp1250"
@@ -71,13 +70,10 @@ def looks_like_data_row(line: str, pipes=None, lp_slice=None) -> bool:
     t = line.strip()
     if not t:
         return False
-    # wyklucz "1:5", "1:4" itd.
-    if re.match(r"^\d+\s*:\s*\d+", t):
+    if re.match(r"^\d+\s*:\s*\d+", t):  # wyklucz "1:5" itd.
         return False
-    # linia musi mieć sensowną długość
     if pipes and len(line) < pipes[-1]:
         return False
-    # Lp musi być integer
     if lp_slice:
         lp = line[lp_slice[0]:lp_slice[1]].strip()
         if not is_int(lp):
@@ -111,7 +107,7 @@ def build_input_index_map(headers):
 class LkonLayout:
     def __init__(self, plus_positions, col_slices, line_len):
         self.plus_positions = plus_positions[:]      # list[int] indeksy '+'
-        self.col_slices = col_slices[:]              # list[(start,end)] w tej samej linii
+        self.col_slices = col_slices[:]              # list[(start,end)]
         self.line_len = int(line_len)
         self.ncols = len(self.col_slices)
 
@@ -126,7 +122,6 @@ def load_lkon_layout_from_template(template_path: str) -> LkonLayout:
     if header_idx is None:
         raise ValueError("Szablon LKON: nie znaleziono nagłówka tabeli ('Lp.- NAZWISKO HODOWCY').")
 
-    # separator z + pod nagłówkiem
     sep_idx = None
     for j in range(header_idx + 1, min(header_idx + 8, len(lines))):
         ln = lines[j]
@@ -141,7 +136,6 @@ def load_lkon_layout_from_template(template_path: str) -> LkonLayout:
     if len(plus_positions) < 2:
         raise ValueError("Szablon LKON: separator ma za mało '+'.")
 
-    # długość linii danych bierzemy z pierwszego rekordu po separatorze (żeby 1:1 było jak rekord)
     data_idx = None
     for k in range(sep_idx + 1, len(lines)):
         if re.match(r"^\s*\d+", lines[k]):
@@ -152,20 +146,17 @@ def load_lkon_layout_from_template(template_path: str) -> LkonLayout:
 
     line_len = len(lines[data_idx])
 
-    # slices między + (UWAGA: pozycje + mają być puste, więc dane są między nimi)
     col_slices = []
     for i in range(len(plus_positions) - 1):
         start = plus_positions[i] + 1
-        end = plus_positions[i + 1]  # end exclusive
+        end = plus_positions[i + 1]
         col_slices.append((start, end))
 
     layout = LkonLayout(plus_positions, col_slices, line_len)
 
-    # Dla Twojego LKON_M02 oczekujemy 13 kolumn w tabeli
     if layout.ncols != 13:
         raise ValueError(
-            f"Szablon LKON: wykryto {layout.ncols} kolumn, a oczekiwane jest 13 (LKON_M02). "
-            "Upewnij się, że LKON_TEMPLATE.TXT to właściwy wzór."
+            f"Szablon LKON: wykryto {layout.ncols} kolumn, a oczekiwane jest 13 (LKON_M02)."
         )
 
     return layout
@@ -185,35 +176,29 @@ def ensure_zero_if_blank(x: str) -> str:
     return x if x else "0"
 
 def fit_value(val: str, width: int, align: str) -> str:
-    # Wymóg użytkownika: jeśli brak danych w kolumnie => "0"
     val = ensure_zero_if_blank(val)
-    # twarde ucięcie
     if len(val) > width:
         val = val[:width]
-    # align
-    if align == "R":
-        return val.rjust(width)
-    return val.ljust(width)
+    return val.rjust(width) if align == "R" else val.ljust(width)
+
+def force_zero_in_empty_columns(buf, layout: LkonLayout):
+    """
+    Gwarancja: jeśli w jakiejkolwiek kolumnie po złożeniu są same spacje,
+    to wpisujemy '0' (bez naruszania pozycji '+', które MUSZĄ być puste).
+    """
+    for (start, end) in layout.col_slices:
+        # jeśli pole jest puste/spacje
+        if "".join(buf[start:end]).strip() == "":
+            # wpisz '0' możliwie na końcu pola (żeby wyglądało jak liczby z prawej)
+            pos = end - 1
+            # nie wolno trafić w pozycję '+', ale u nas '+' są poza slice'ami
+            if start <= pos < end:
+                buf[pos] = "0"
 
 def build_lkon_row_1to1(vals, idxs, layout: LkonLayout) -> str:
     def g(k):
         idx = idxs.get(k, 0)
         return vals[idx] if idx else ""
-
-    # Mapowanie do 13 kolumn LKON_M02:
-    # 0 Lp
-    # 1 Nazwisko
-    # 2 s
-    # 3 W-K-S-S / WKM
-    # 4 T
-    # 5 Obrączka
-    # 6 T PRZYL
-    # 7 PRĘDKOŚĆ
-    # 8 COEFIC
-    # 9 PKT
-    #10 SW-PUNKTY
-    #11 PKT-2
-    #12 ODLEG
 
     lp   = g("lp")
     nazw = g("naz")
@@ -231,10 +216,8 @@ def build_lkon_row_1to1(vals, idxs, layout: LkonLayout) -> str:
 
     fields = [lp, nazw, sek, wkm, typ, obr, prz, pred, coef, pkt, sw, pkt2, km]
 
-    # Align wg wyglądu tabeli LKON: liczby na prawo, teksty na lewo
     aligns = ["R", "L", "R", "R", "L", "L", "R", "R", "R", "R", "R", "R", "R"]
 
-    # buduj bufor
     buf = [" "] * layout.line_len
 
     for col_i, (start, end) in enumerate(layout.col_slices):
@@ -242,10 +225,13 @@ def build_lkon_row_1to1(vals, idxs, layout: LkonLayout) -> str:
         s = fit_value(fields[col_i], width, aligns[col_i])
         buf[start:end] = list(s)
 
-    # Wymóg: miejsca dokładnie pod '+' MUSZĄ być puste
+    # pozycje pod '+' MUSZĄ być puste
     for p in layout.plus_positions:
         if 0 <= p < len(buf):
             buf[p] = " "
+
+    # NOWE: twarda gwarancja "brak danych w jakiejkolwiek kolumnie => 0"
+    force_zero_in_empty_columns(buf, layout)
 
     return "".join(buf)
 
@@ -265,7 +251,6 @@ def replace_results_in_template(template_bytes: bytes, new_lines: list[str], enc
     if header_idx is None:
         raise ValueError("Szablon LKON: brak nagłówka tabeli (Lp.- NAZWISKO HODOWCY).")
 
-    # start danych
     data_start = None
     for i in range(header_idx + 1, len(lines_t)):
         if re.match(r"^\s*\d+", lines_t[i]):
@@ -274,7 +259,6 @@ def replace_results_in_template(template_bytes: bytes, new_lines: list[str], enc
     if data_start is None:
         raise ValueError("Szablon LKON: brak pierwszej linii danych.")
 
-    # koniec danych: pierwsza linia, która NIE wygląda jak rekord
     data_end = len(lines_t)
     for i in range(data_start, len(lines_t)):
         if not re.match(r"^\s*\d+", lines_t[i]):
@@ -289,7 +273,6 @@ def replace_results_in_template(template_bytes: bytes, new_lines: list[str], enc
 # ============================================================
 
 def convert_A_simple(input_path: str) -> str:
-    # Prosty output bez kodów drukarki, ale 1:1 wg LKON_TEMPLATE.TXT
     tpl = os.path.join(app_dir(), "LKON_TEMPLATE.TXT")
     if not os.path.exists(tpl):
         raise ValueError("Brak LKON_TEMPLATE.TXT obok programu (potrzebny do układu 1:1).")
@@ -325,7 +308,6 @@ def convert_A_simple(input_path: str) -> str:
     return out_path
 
 def convert_B_printer_1to1(input_path: str, template_path: str) -> str:
-    # Drukarkowy: kody + reszta z template, podmiana tylko danych
     layout = load_lkon_layout_from_template(template_path)
 
     in_lines, _ = read_text_auto(input_path)
@@ -424,22 +406,22 @@ def run_B2():
 def main():
     root = tk.Tk()
     root.title("Konwerter lista_konk → LKON (1:1 LKON_M02)")
-    root.geometry("620x270")
+    root.geometry("680x290")
     root.resizable(False, False)
 
     tk.Label(
         root,
         text="Wersja 1:1 LKON_M02:\n"
-             "- kolumny wyznaczane z linii '+...+'\n"
+             "- kolumny z linii '+...+'\n"
              "- pozycje pod '+' zawsze puste\n"
-             "- brak danych w kolumnie => 0\n"
-             "- usuwa prefiks '1-' z T PRZYL",
+             "- brak danych w jakiejkolwiek kolumnie => 0\n"
+             "- usuwa '1-' z T PRZYL",
         justify="center"
     ).pack(pady=12)
 
-    tk.Button(root, text="A) Prosty *_LKON.txt (1:1 wg LKON_TEMPLATE.TXT)", width=70, height=2, command=run_A).pack(pady=6)
-    tk.Button(root, text="B1) Drukarkowy *_LKON_DRUK.txt (wybierz LKON_M02 jako szablon)", width=70, height=2, command=run_B1).pack(pady=6)
-    tk.Button(root, text="B2) Drukarkowy (LKON_TEMPLATE.TXT obok EXE)", width=70, height=2, command=run_B2).pack(pady=6)
+    tk.Button(root, text="A) Prosty *_LKON.txt (1:1 wg LKON_TEMPLATE.TXT)", width=78, height=2, command=run_A).pack(pady=6)
+    tk.Button(root, text="B1) Drukarkowy *_LKON_DRUK.txt (wybierz LKON_M02 jako szablon)", width=78, height=2, command=run_B1).pack(pady=6)
+    tk.Button(root, text="B2) Drukarkowy (LKON_TEMPLATE.TXT obok EXE)", width=78, height=2, command=run_B2).pack(pady=6)
 
     root.mainloop()
 
